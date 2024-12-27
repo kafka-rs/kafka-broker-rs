@@ -1,0 +1,12 @@
+[package]
+name = "kafka-broker-rs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0"
+tokio = { version = "1", features = ["full"] }
+tracing-subscriber = { version = "0.3", features=["env-filter"] }
+tracing = "0.1"
+dotenvy = "0.15"
+tokio-util = "0.7"
