@@ -1,59 +1,127 @@
-//! Defines the KafkaRequestMessage struct, which represents a parsed request
-//! from the client. For now, we only capture the message size and raw bytes,
-//! deferring detailed header and payload parsing for future implementations.
+//! # KafkaRequestMessage Module
+//!
+//! This module defines the [`KafkaRequestMessage`] struct, which represents an incoming request
+//! from a Kafka client. The Kafka protocol typically encodes a 4-byte message size, followed by
+//! a header and a payload, all in a binary format. While the current implementation does not parse
+//! the header or payload in detail, it provides the foundation for future expansions.
+//!
+//! This code uses the [`KafkaBrokerError`] type to indicate malformed requests, invalid sizes, or
+//! other issues encountered during deserialization. Each of these errors can be mapped to a
+//! standard Kafka error code (see `kafka_error_codes.rs`) so the broker can return appropriate
+//! responses.
 
-use anyhow::{bail, Result};
+use crate::kafka_protocol::kafka_error::{KafkaBrokerError, KafkaResult};
+use crate::kafka_protocol::kafka_error_codes::INVALID_REQUEST;
+use crate::kafka_protocol::kafka_request_header::KafkaRequestHeader;
 use std::convert::TryInto;
+use tracing::warn;
 
+/// A structured representation of a Kafka request message.
+///
+/// Currently, this struct only stores:
+/// - An integer `message_size` (parsed from the first 4 bytes),
+/// - A placeholder `KafkaRequestHeader`,
+/// - A placeholder `KafkaRequest` payload.
+///
+/// # Future Enhancements
+///
+/// In a more complete implementation, you'd parse additional header fields
+/// (e.g., API key, API version, correlation ID, client ID length, etc.) and the
+/// request payload into strongly typed structures.
 #[derive(Debug)]
 pub struct KafkaRequestMessage {
+    /// The overall size of the message in bytes, as read from the first 4 bytes of the buffer.
     pub message_size: i32,
-    pub header: KafkaHeader,
+
+    /// Placeholder for the future `KafkaRequestHeader` fields.
+    /// In real Kafka requests, this contains metadata such as API key, version, etc.
+    pub header: KafkaRequestHeader,
+
+    /// Placeholder for the future `KafkaRequest` fields.
+    /// This is where the actual request data (e.g., topic name, partition info) will be stored.
     pub payload: KafkaRequest,
 }
 
-/// Placeholder for the Kafka header struct.
-#[derive(Debug)]
-pub struct KafkaHeader;
-
-/// Placeholder for the Kafka request payload struct.
+/// Represents the payload portion of a Kafka request.
+/// In the real Kafka protocol, this section may include details such as
+/// topic-partition data, message sets, and other request-specific fields.
 #[derive(Debug)]
 pub struct KafkaRequest;
 
 impl KafkaRequestMessage {
-    /// Constructs a `KafkaRequestMessage` from the given raw bytes.  
-    ///  
-    /// Currently, this only:  
-    /// - Reads the first 4 bytes as a big-endian `i32` for `message_size`.  
-    /// - Logs or checks that enough bytes are present (in a future version).  
-    /// - Fills `header` and `payload` with placeholder structs.  
+    /// Constructs a [`KafkaRequestMessage`] from the given raw bytes.
     ///
     /// # Errors
     ///
-    /// Returns an error if:
-    /// - The `raw_data` length is less than 4 (cannot read `message_size`).
-    /// - In a future version, if `raw_data.len() < message_size + 4`, meaning incomplete data.
-    pub fn from_bytes(raw_data: &[u8]) -> Result<Self> {
+    /// Returns a [`KafkaBrokerError::MalformedRequest`] if:
+    /// - There are fewer than 4 bytes to read the `message_size`.
+    /// - The total length of `raw_data` is not equal to `message_size + 4`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use crate::kafka_protocol::kafka_error::KafkaResult;
+    /// use crate::kafka_protocol::kafka_request_message::KafkaRequestMessage;
+    ///
+    /// fn handle_bytes(raw_data: &[u8]) -> KafkaResult<()> {
+    ///     let req_msg = KafkaRequestMessage::from_bytes(raw_data)?;
+    ///     // ...
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn from_bytes(raw_data: &[u8]) -> KafkaResult<Self> {
+        // We need at least 4 bytes to read the message_size field.
         if raw_data.len() < 4 {
-            bail!(
-                "Not enough bytes to parse `message_size`; got {} bytes",
-                raw_data.len()
-            );
+            return Err(KafkaBrokerError::MalformedRequest {
+                code: INVALID_REQUEST,
+                reason: format!(
+                    "Not enough bytes for message_size; got {} bytes.",
+                    raw_data.len()
+                ),
+            });
         }
 
-        // Extract the first 4 bytes for the message size (big-endian).
-        let size_bytes: [u8; 4] = raw_data[0..4].try_into().unwrap();
+        // Parse the first 4 bytes as a big-endian i32, which indicates total message size.
+        // We know that raw_data.len() >= 4 due to the earlier length check.
+        // Therefore, this call should never fail. If it does, we consider it a logic error.
+        let size_bytes = match raw_data[0..4].try_into() {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                // In theory, this branch should never be reached because we checked raw_data.len() >= 4.
+                // If we do end up here, it indicates a logical/data inconsistency we didn't account for.
+
+                // If this is truly an unrecoverable or logic error, consider error! instead.
+                warn!("Unexpected inability to convert first 4 bytes to [u8; 4]. Possible data corruption?");
+
+                return Err(KafkaBrokerError::MalformedRequest {
+                    code: INVALID_REQUEST,
+                    reason: "Could not convert first 4 bytes to [u8; 4].".to_string(),
+                });
+            }
+        };
         let message_size = i32::from_be_bytes(size_bytes);
 
-        // In the future, you might validate that `raw_data[4..]` has `message_size` bytes.
-        // Right now, we do not enforce it; we just store placeholders.
-        let _raw_payload = &raw_data[4..];
+        // Check if raw_data length matches message_size + 4 (the size field + the body).
+        let expected_len = message_size as usize + 4;
+        if raw_data.len() != expected_len {
+            return Err(KafkaBrokerError::MalformedRequest {
+                code: INVALID_REQUEST,
+                reason: format!(
+                    "Data length ({}) does not match the indicated message_size ({}). Expected {} bytes total.",
+                    raw_data.len(),
+                    message_size,
+                    expected_len
+                ),
+            });
+        }
 
-        // Temporary stubs (will parse real fields later).
-        let header = KafkaHeader;
+        // For now, we use placeholder structs for the header and payload.
+        let header = KafkaRequestHeader::from_bytes(&raw_data[4..])?;
+
         let payload = KafkaRequest;
 
-        Ok(KafkaRequestMessage {
+        // Construct and return the `KafkaRequestMessage`.
+        Ok(Self {
             message_size,
             header,
             payload,

@@ -62,6 +62,9 @@ pub async fn handle_client(mut socket: TcpStream, state: SharedBrokerState) -> R
         );
         let request_message = KafkaRequestMessage::from_bytes(&raw_data)?;
 
+        // Log the parsed request object at debug level:
+        debug!("Parsed KafkaRequestMessage: {:#?}", request_message);
+
         // 3) Create the response
         debug!("Generating response based on the parsed request.");
         let response = create_response(request_message, &state)?;

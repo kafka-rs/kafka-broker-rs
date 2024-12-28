@@ -5,13 +5,13 @@
 #[derive(Debug)]
 pub struct KafkaResponseMessage {
     pub message_size: i32,
-    pub header: KafkaHeader,
+    pub header: KafkaResponseHeader,
     pub payload: KafkaResponse,
 }
 
 /// Placeholder for the Kafka header (same as in `kafka_request_message.rs`).
 #[derive(Debug)]
-pub struct KafkaHeader;
+pub struct KafkaResponseHeader;
 
 /// Placeholder for the Kafka response payload struct.
 #[derive(Debug)]
